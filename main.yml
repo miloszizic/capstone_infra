@@ -1,0 +1,47 @@
+
+# Roles for master and worker instances
+- hosts: tag_name_master_node
+  roles:
+     - k8s_master_node
+
+- hosts: tag_name_worker_node
+  roles:
+     - k8s_worker_node
+# Create token in master to join worker nodes
+- hosts: tag_name_master_node
+  tasks:
+  - name: run join cmd in master
+    shell: "kubeadm token  create --print-join-command"
+    register: token_output
+
+  - set_fact:
+      token_for_join: "{{ token_output.stdout }}"
+
+  - add_host:
+      name: "joint_register"
+      shared_variable: "{{ token_for_join }}"
+
+- hosts: tag_name_worker_node
+  vars:
+    join_slave: "{{ hostvars['joint_register']['shared_variable'] }}"
+  tasks:
+  - name: Joining slave to master node
+    shell: "{{ join_slave }}"
+    ignore_errors: yes
+
+- hosts: tag_name_master_node
+  tasks:
+     - name: Apply calico
+       become_user: ec2-user
+       shell: kubectl apply  -f https://docs.projectcalico.org/manifests/calico.yaml
+       args:
+         warn: false
+- hosts: 127.0.0.1
+  tasks:
+     - name: Waiting for Calico pods to get in running state
+       pause:
+         minutes: 1
+
+- hosts: tag_name_master_node
+  roles:
+    - k8s_wordpress_mysql

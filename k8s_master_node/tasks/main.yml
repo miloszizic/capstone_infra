@@ -1,0 +1,102 @@
+# tasks file for k8s_master_node
+
+- name: Installing Docer
+  package:
+    name:
+      - docker
+    state: present
+
+- name: Install git
+  package:
+    name:
+      - git
+    state: present
+    update_cache: yes
+
+- name: Yum repo configuration for K8s
+  yum_repository:
+    name: kubernetes
+    description: yum for k8s
+    baseurl: https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+    enabled: yes
+    gpgcheck: yes
+    repo_gpgcheck: yes
+    gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+    exclude:
+      - kubelet
+      - kubeadm
+      - kubectl
+
+- name: Installing kubeadm
+  yum:
+    name: kubeadm
+    disable_excludes: kubernetes
+
+- name: Installing iproute-tc
+  package:
+    name:
+      - iproute-tc
+    state: present
+
+- name: Starting and enabling docker and kubelet services
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop:
+    - kubelet
+    - docker
+
+- name: Pulling all configuration images
+  shell: kubeadm config images pull
+
+- name: Copying local daemon.json file to remote server
+  copy:
+    dest: /etc/docker/daemon.json
+    src:  daemon.json
+
+- name: Restarting docker services
+  service:
+    name: docker
+    state: restarted
+
+- name: Copying local k8s.conf file to remote server
+  copy:
+    dest: /etc/sysctl.d/k8s.conf
+    src: k8s.conf
+
+- name: Reload the configuration
+  shell: "sysctl --system"
+
+- name: Initialize the cluster
+  shell: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --ignore-preflight-errors=Mem
+  ignore_errors: yes
+
+- name: Create .kube directory
+  become: yes
+  become_user: ec2-user
+  file:
+    path: $HOME/.kube
+    state: directory
+    mode: 0755
+
+- name: Check admin.conf file exists.
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_conf
+
+- name: Copy admin.conf to user's kube config
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/ec2-user/.kube/config
+    remote_src: yes
+    owner: ec2-user
+  when: k8s_conf.stat.exists
+
+- name: Config privileges changed
+  become_user: ec2-user
+  shell: "chown $(id -u):$(id -g) $HOME/.kube/config"
+
+- name: Add autocomplete permanently to bash shell
+  become_user: ec2-user
+  shell: 'echo "source <(kubectl completion bash)" >> ~/.bashrc'

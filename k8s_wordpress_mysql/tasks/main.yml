@@ -1,0 +1,75 @@
+---
+ #tasks file for k8s_wordpress_mysql
+
+- name: Creating directory for WordPress PV at /var/www/html.
+  become: yes
+  become_user: ec2-user
+  file:
+    path: /home/ec2-user/wordpress_data
+    state: directory
+
+- name: Creating directory for MySQL PV at /var/lib/mysql.
+  become: yes
+  become_user: ec2-user
+  file:
+    path: /home/ec2-user/mysql_database
+    state: directory
+
+- name: Create objests directory
+  become: yes
+  become_user: ec2-user
+  file:
+    path: /home/ec2-user/manifests/
+    state: directory
+    mode: 0755
+
+- name: Copying object files from local repository to ec2 master_node.
+  copy:
+    src: "{{ item }}"
+    dest: /home/ec2-user/manifests/
+  loop:
+    - metrics_server.yml
+    - mysql.yml
+    - mysql_pv_pvc.yml
+    - secret.yml
+    - wordpress.yml
+    - wordpress_pv_pvc.yml
+    - ingress_policy.yml
+    - test_user.yml
+    - etcd.sh
+
+- name: Appling MySQL, WordPress and other k8s object files.
+  become_user: ec2-user
+  shell: "kubectl create -f /home/ec2-user/manifests/{{ item }}"
+  ignore_errors: yes
+  loop:
+    - secret.yml
+    - wordpress_pv_pvc.yml
+    - mysql_pv_pvc.yml
+    - metrics_server.yml
+    - mysql.yml
+    - wordpress.yml
+    - ingress_policy.yml
+    - test_user.yml
+
+- name: Build ETCD perms
+  file: dest=/home/ec2-user/manifests/etcd.sh mode=a+x
+
+- name: Runing a ETCD install script
+  command: ./etcd.sh
+  args:
+    chdir: /home/ec2-user/manifests/
+
+- name: configuring the permissions for ECTDCTL
+  file: path=/etc/kubernetes/pki/etcd owner=ec2-user  mode=0775 state=directory recurse=yes
+
+- name: etcdctl snapshot
+  become_user: ec2-user
+  shell: "ETCDCTL_API=3 etcdctl snapshot save snapshot.db --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key"
+
+- name: Applying HPA to Wordpress deployment
+  become_user: ec2-user
+  shell: "kubectl autoscale deployment wordpress  --min=2 --max=10 --cpu-percent=50"
+
+
+

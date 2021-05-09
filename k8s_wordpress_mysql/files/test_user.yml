@@ -1,0 +1,22 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: tester
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/portforward"]
+  verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tester-role-binding
+subjects:
+- kind: User
+  name: tester
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: tester
+  apiGroup: rbac.authorization.k8s.io

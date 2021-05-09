@@ -1,0 +1,132 @@
+- hosts: 127.0.0.1
+  vars_files:
+    - aws_cred.yml
+  tasks:
+    - name: Deploying Master instance
+      amazon.aws.ec2:
+        key_name: caps
+        instance_type: t2.medium
+        image: ami-0742b4e673072066f
+        group_id: sg-1d0f6a1d
+        count: 1
+        instance_tags:
+          name: master_node
+          lb: true
+        region: us-east-1
+        vpc_subnet_id: subnet-fadc65cb
+        assign_public_ip: yes
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        state: present
+      register: ec2_m
+
+    - name: Deploying worker intances subnet 1
+      amazon.aws.ec2:
+        key_name: caps
+        instance_type: t2.micro
+        image: ami-0742b4e673072066f
+        group_id: sg-1d0f6a1d
+        count: 2
+        instance_tags:
+          name: worker_node
+          lb: true
+        region: us-east-1
+        vpc_subnet_id: subnet-fadc65cb
+        assign_public_ip: yes
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        state: present
+      register: ec2_w
+
+    - name: Deploying worker intances subnet 2
+      amazon.aws.ec2:
+        key_name: caps
+        instance_type: t2.micro
+        image: ami-0742b4e673072066f
+        group_id: sg-1d0f6a1d
+        count: 1
+        instance_tags:
+          name: worker_node
+          lb: true
+        region: us-east-1
+        vpc_subnet_id: subnet-e390fa85
+        assign_public_ip: yes
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        state: present
+      register: ec2_w
+
+    - name: Waiting for instaces to get in running state
+      pause:
+        minutes: 3
+
+    - name: Gather information about any instance
+      ec2_instance_info:
+        filters:
+          instance-state-name: "running"
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        region: us-east-1
+      register: ec2_m
+    # Create an ELB, skip it if already exists
+    - name: Create ELB
+      local_action:
+        module: ec2_elb_lb
+        name: "LB"
+        state: present
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        region: "us-east-1"
+        security_group_names:
+          - default
+        connection_draining_timeout: 60
+        idle_timeout: 300
+        cross_az_load_balancing: "yes"
+        zones:
+          - "us-east-1a"
+          - "us-east-1b"
+          - "us-east-1c"
+          - "us-east-1d"
+          - "us-east-1e"
+          - "us-east-1f"
+        listeners:
+          - protocol: http
+            load_balancer_port: 80
+            instance_port: 80
+        health_check:
+          ping_protocol: http
+          ping_port: 80
+          ping_path: "/index.html"
+          response_timeout: 5
+          interval: 30
+          unhealthy_threshold: 2
+          healthy_threshold: 10
+        stickiness:
+          type: loadbalancer
+          enabled: yes
+          expiration: 300
+        tags:
+          Name: "LB"
+    # Associate an elastic to all instances
+    - name: Associate an elastic to each instance
+      ec2_eip:
+        in_vpc: yes
+        region: us-east-1
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        device_id: "{{ item.instance_id }}"
+        state: present
+      loop: "{{ ec2_m.instances }}"
+    # Register Instances with ELB - note that health check will fail because there is http running
+    - name: Instance Register with ELB
+      local_action:
+        module: ec2_elb
+        region: "us-east-1"
+        aws_access_key: "{{ user_name }}"
+        aws_secret_key: "{{ password }}"
+        instance_id: "{{ item.instance_id }}"
+        ec2_elbs: "LB"
+        state: present
+      loop: "{{ ec2_m.instances }}"
+      ignore_errors: yes # Health check will fail but instances will be added for later health check
+
